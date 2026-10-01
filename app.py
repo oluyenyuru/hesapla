@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, date
 
 # --- Sayfa Yapılandırması ---
 st.set_page_config(
@@ -24,9 +24,8 @@ EMBEDDED_INDEXES = {
 }
 
 # --- Canlı Döviz Çekme Fonksiyonu ---
-@st.cache_data(ttl=3600)  # Veriyi 1 saat önbellekte tutar
+@st.cache_data(ttl=3600)
 def fetch_usd_rate(date_str):
-    """Canlı döviz servisinden kur çeker, hata durumunda yedek kaynağa geçer."""
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=TRY"
         response = requests.get(url, timeout=5)
@@ -36,7 +35,6 @@ def fetch_usd_rate(date_str):
     except Exception:
         pass
     
-    # Yedek Canlı Kur Servisi
     try:
         url_alt = f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/usd.json"
         res_alt = requests.get(url_alt, timeout=5)
@@ -45,14 +43,16 @@ def fetch_usd_rate(date_str):
     except Exception:
         pass
         
-    return 35.0  # Sabit Varsayılan
+    return 35.0
 
 def get_closest_index(date_obj):
     ym = date_obj.strftime("%Y-%m")
     if ym in EMBEDDED_INDEXES:
         return EMBEDDED_INDEXES[ym]
-    # En yakın ayı bul
-    closest_key = min(EMBEDDED_INDEXES.keys(), key=lambda k: abs((datetime.strptime(k, "%Y-%m") - date_obj).days))
+    closest_key = min(
+        EMBEDDED_INDEXES.keys(), 
+        key=lambda k: abs((datetime.strptime(k, "%Y-%m").date() - date_obj).days)
+    )
     return EMBEDDED_INDEXES[closest_key]
 
 # --- Arayüz / Başlık ---
@@ -66,15 +66,14 @@ col_in1, col_in2 = st.columns([1, 1])
 
 with col_in1:
     st.subheader("📝 Teklif & Tarih Bilgileri")
-    initial_date = st.date_input("İlk Teklif Tarihi", datetime(2024, 1, 15))
+    initial_date = st.date_input("İlk Teklif Tarihi", date(2024, 1, 15))
     initial_price = st.number_input("İlk Teklif Fiyatı (₺)", min_value=0.0, value=1000000.0, step=10000.0)
 
 with col_in2:
     st.subheader("📅 Güncelleme / İhale Bilgileri")
-    tender_date = st.date_input("İhale / Güncelleme Tarihi", datetime(2025, 6, 15))
+    tender_date = st.date_input("İhale / Güncelleme Tarihi", date(2025, 6, 15))
     new_offer_price = st.number_input("Yeni Firma Teklifi (₺)", min_value=0.0, value=1520000.0, step=10000.0)
 
-# Verileri Otomatik Çek
 initial_date_str = initial_date.strftime("%Y-%m-%d")
 tender_date_str = tender_date.strftime("%Y-%m-%d")
 
@@ -86,7 +85,7 @@ idx_tender = get_closest_index(tender_date)
 
 st.divider()
 
-# --- Ekonomik Göstergeler (Düzenlenebilir) ---
+# --- Ekonomik Göstergeler ---
 st.subheader("📈 Ekonomik Göstergeler (Canlı & Otomatik)")
 col_g1, col_g2, col_g3 = st.columns(3)
 
