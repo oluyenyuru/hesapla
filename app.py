@@ -71,7 +71,7 @@ with col_in1:
 
 with col_in2:
     st.subheader("📅 Güncelleme / İhale Bilgileri")
-    tender_date = st.date_input("İhale / Güncelleme Tarihi", date(2025, 6, 15))
+    tender_date = st.date_input("İhale / Güncelleme Tarihi", date.today())
     new_offer_price = st.number_input("Yeni Firma Teklifi (₺)", min_value=0.0, value=1520000.0, step=10000.0)
 
 initial_date_str = initial_date.strftime("%Y-%m-%d")
