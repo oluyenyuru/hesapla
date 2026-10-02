@@ -66,12 +66,12 @@ col_in1, col_in2 = st.columns([1, 1])
 
 with col_in1:
     st.subheader("📝 Teklif & Tarih Bilgileri")
-    initial_date = st.date_input("İlk Teklif Tarihi", date(2024, 1, 15))
+    initial_date = st.date_input("İlk Teklif Tarihi", date(2024, 1, 15), format="DD/MM/YYYY")
     initial_price = st.number_input("İlk Teklif Fiyatı (₺)", min_value=0.0, value=1000000.0, step=10000.0)
 
 with col_in2:
     st.subheader("📅 Güncelleme / İhale Bilgileri")
-    tender_date = st.date_input("İhale / Güncelleme Tarihi", date.today())
+    tender_date = st.date_input("İhale / Güncelleme Tarihi", date.today(), format="DD/MM/YYYY")
     new_offer_price = st.number_input("Yeni Firma Teklifi (₺)", min_value=0.0, value=1520000.0, step=10000.0)
 
 initial_date_str = initial_date.strftime("%Y-%m-%d")
