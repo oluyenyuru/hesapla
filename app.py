@@ -91,7 +91,7 @@ col_g1, col_g2, col_g3 = st.columns(3)
 
 with col_g1:
     st.markdown("**USD / TRY Kuru**")
-    u_init = st.number_input("İlk Tarih USD", value=float(usd_initial), format="%.2f")
+    u_init = st.number_input("Son Teklif Tarih USD", value=float(usd_initial), format="%.2f")
     u_tend = st.number_input("İhale Tarihi USD", value=float(usd_tender), format="%.2f")
 
 with col_g2:
