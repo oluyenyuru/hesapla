@@ -96,12 +96,12 @@ with col_g1:
 
 with col_g2:
     st.markdown("**Yİ-ÜFE Endeksi**")
-    yi_init = st.number_input("İlk Yİ-ÜFE", value=float(idx_initial["yiufe"]), format="%.1f")
+    yi_init = st.number_input("Son Teklif Yİ-ÜFE", value=float(idx_initial["yiufe"]), format="%.1f")
     yi_tend = st.number_input("İhale Yİ-ÜFE", value=float(idx_tender["yiufe"]), format="%.1f")
 
 with col_g3:
     st.markdown("**TÜFE Endeksi**")
-    tu_init = st.number_input("İlk TÜFE", value=float(idx_initial["tufe"]), format="%.1f")
+    tu_init = st.number_input("Son Teklif TÜFE", value=float(idx_initial["tufe"]), format="%.1f")
     tu_tend = st.number_input("İhale TÜFE", value=float(idx_tender["tufe"]), format="%.1f")
 
 # --- Hesaplamalar ---
