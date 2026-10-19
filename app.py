@@ -47,62 +47,103 @@ def get_index(date_obj):
 
 
 # --- Döviz ---
-def _fetch_tcmb(date_obj, api_key):
-    """TCMB EVDS'den döviz alış kurunu çeker (isteğe bağlı, API anahtarı gerekir).
+def _fetch_tcmb_xml(date_obj, side):
+    """TCMB gösterge kurları (anahtarsız XML). Tatil/hafta sonu için geriye gider."""
+    import xml.etree.ElementTree as ET
+    from datetime import timedelta
 
-    Seri kodlarını (TP.DK.USD.A.YTL / TP.DK.EUR.A.YTL) EVDS arayüzünden
-    doğrulayın.
-    """
-    start = date_obj.strftime("%d-%m-%Y")
+    tag = "ForexBuying" if side == "Alış" else "ForexSelling"
+    last_err = "kayıt bulunamadı"
+    d = min(date_obj, date.today())
+    for _ in range(10):
+        url = f"https://www.tcmb.gov.tr/kurlar/{d:%Y%m}/{d:%d%m%Y}.xml"
+        try:
+            res = requests.get(url, timeout=8)
+            if res.status_code == 200:
+                root = ET.fromstring(res.content)
+                out = {}
+                for cur in root.findall("Currency"):
+                    code = cur.get("CurrencyCode")
+                    if code in ("USD", "EUR"):
+                        out[code] = float(cur.findtext(tag))
+                if "USD" in out and "EUR" in out:
+                    return out, d
+            last_err = f"HTTP {res.status_code} ({d:%d.%m.%Y})"
+        except Exception as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+            break
+        d -= timedelta(days=1)
+    raise RuntimeError(last_err)
+
+
+def _fetch_evds3(date_obj, api_key, side):
+    """EVDS3 (anahtar gerekir). Eski evds2 adresi kapatıldı."""
+    from datetime import timedelta
+
+    suffix = "A" if side == "Alış" else "S"
+    end = min(date_obj, date.today())
+    start = end - timedelta(days=10)
     out = {}
     for cur in ("USD", "EUR"):
         url = (
-            "https://evds2.tcmb.gov.tr/service/evds/"
-            f"series=TP.DK.{cur}.A.YTL&startDate={start}&endDate={start}&type=json"
+            "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
+            f"series=TP.DK.{cur}.{suffix}.YTL&startDate={start:%d-%m-%Y}"
+            f"&endDate={end:%d-%m-%Y}&type=json"
         )
-        res = requests.get(url, headers={"key": api_key}, timeout=8)
+        res = requests.get(url, headers={"key": api_key}, timeout=10)
         res.raise_for_status()
         items = res.json().get("items", [])
-        # Hafta sonu/tatil: veri yoksa hata ver, çağıran yedek kaynağa geçsin
-        value = items[0].get(f"TP_DK_{cur}_A_YTL") if items else None
-        if value is None:
-            raise ValueError("TCMB verisi yok")
-        out[cur] = float(value)
+        field = f"TP_DK_{cur}_{suffix}_YTL"
+        values = [it[field] for it in items if it.get(field) not in (None, "")]
+        if not values:
+            raise ValueError(f"{cur} verisi yok")
+        out[cur] = float(values[-1])  # aralıktaki son iş günü
     return out
 
 
 def _fetch_frankfurter(date_obj):
     path = min(date_obj, date.today()).strftime("%Y-%m-%d")
-    url = f"https://api.frankfurter.app/{path}?from=USD&to=TRY,EUR"
-    res = requests.get(url, timeout=8)
-    res.raise_for_status()
-    rates = res.json()["rates"]
-    usd_try = float(rates["TRY"])
-    usd_eur = float(rates["EUR"])
-    return {"USD": usd_try, "EUR": usd_try / usd_eur}
+    last = None
+    for base in ("https://api.frankfurter.dev/v1", "https://api.frankfurter.app"):
+        try:
+            res = requests.get(f"{base}/{path}?base=USD&symbols=TRY,EUR", timeout=8)
+            res.raise_for_status()
+            rates = res.json()["rates"]
+            usd_try = float(rates["TRY"])
+            return {"USD": usd_try, "EUR": usd_try / float(rates["EUR"])}
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+    raise RuntimeError(last)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_currency_rates(date_str, api_key=""):
-    """Başarılıysa (kurlar, kaynak) döner; başarısızsa istisna fırlatır.
-
-    İstisnalar önbelleğe alınmadığı için başarısız sonuç kalıcılaşmaz.
-    """
+def fetch_currency_rates(date_str, api_key, side):
+    """Başarılıysa (kurlar, kaynak) döner; hepsi başarısızsa nedenleri içeren istisna fırlatır."""
     d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    errors = []
+    try:
+        rates, used = _fetch_tcmb_xml(d, side)
+        return rates, f"TCMB gösterge kuru ({used:%d.%m.%Y}, {side})"
+    except Exception as exc:
+        errors.append(f"TCMB XML: {exc}")
     if api_key:
         try:
-            return _fetch_tcmb(d, api_key), "TCMB (EVDS)"
-        except Exception:
-            pass
-    return _fetch_frankfurter(d), "Frankfurter (ECB)"
-
-
-def get_rates(date_obj, api_key):
+            return _fetch_evds3(d, api_key, side), f"TCMB EVDS3 ({side})"
+        except Exception as exc:
+            errors.append(f"EVDS3: {exc}")
     try:
-        rates, source = fetch_currency_rates(date_obj.strftime("%Y-%m-%d"), api_key)
-        return rates, source, False
-    except Exception:
-        return {"USD": 0.0, "EUR": 0.0}, "Alınamadı", True
+        return _fetch_frankfurter(d), "Frankfurter (ECB)"
+    except Exception as exc:
+        errors.append(f"Frankfurter: {exc}")
+    raise RuntimeError(" | ".join(errors))
+
+
+def get_rates(date_obj, api_key, side):
+    try:
+        rates, source = fetch_currency_rates(date_obj.strftime("%Y-%m-%d"), api_key, side)
+        return rates, source, False, ""
+    except Exception as exc:
+        return {"USD": 0.0, "EUR": 0.0}, "Alınamadı", True, str(exc)
 
 
 # --- Başlık ---
@@ -111,10 +152,11 @@ st.caption("Kamu Alımları İçin Ekonomik Göstergelere Dayalı Fiyat Araştı
 
 with st.sidebar:
     st.header("⚙️ Ayarlar")
+    kur_side = st.radio("TCMB Döviz Kuru Türü", ["Alış", "Satış"], horizontal=True)
     evds_key = st.text_input(
-        "TCMB EVDS API Anahtarı (isteğe bağlı)",
+        "TCMB EVDS3 API Anahtarı (isteğe bağlı)",
         type="password",
-        help="Girilirse kurlar TCMB'den çekilir; yoksa Frankfurter (ECB) kullanılır.",
+        help="Gösterge kurları anahtarsız çekilir; anahtar yalnızca ikinci yedek kaynaktır.",
     )
     vade_pct = st.slider(
         "Vade / Finansman Risk Primi (%)",
@@ -153,8 +195,8 @@ if initial_price <= 0:
     st.warning("Son alım birim fiyatı 0'dan büyük olmalıdır.")
     st.stop()
 
-rates_i, src_i, fail_i = get_rates(initial_date, evds_key)
-rates_t, src_t, fail_t = get_rates(tender_date, evds_key)
+rates_i, src_i, fail_i, err_i = get_rates(initial_date, evds_key, kur_side)
+rates_t, src_t, fail_t, err_t = get_rates(tender_date, evds_key, kur_side)
 idx_i_key, idx_i = get_index(initial_date)
 idx_t_key, idx_t = get_index(tender_date)
 
@@ -167,6 +209,11 @@ if fail_i or fail_t:
         "⚠️ Kur verisi otomatik çekilemedi. Lütfen aşağıdaki kur alanlarını "
         "elle girin; 0 olan alanlar hesaba katılmaz."
     )
+    with st.expander("Hata ayrıntıları"):
+        if fail_i:
+            st.write(f"Geçmiş tarih: {err_i}")
+        if fail_t:
+            st.write(f"Güncel tarih: {err_t}")
 st.caption(
     f"Kur kaynağı: geçmiş → {src_i}, güncel → {src_t} | "
     f"Kullanılan endeks dönemi: geçmiş → {idx_i_key}, güncel → {idx_t_key}"
