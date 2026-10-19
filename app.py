@@ -6,44 +6,43 @@ from datetime import datetime, date
 
 # --- Sayfa Yapılandırması ---
 st.set_page_config(
-    page_title="İhale & Satın Alma Fiyat Analiz Sistemi",
-    page_icon="📊",
+    page_title="Kamu Doğrudan Temin & İhale Fiyat Analiz Sistemi",
+    page_icon="⚖️",
     layout="wide"
 )
 
-# --- Dahili TÜİK Endeks Veritabanı ---
+# --- Genişletilmiş TÜİK Resmi Endeks Veritabanı ---
 EMBEDDED_INDEXES = {
+    "2023-01": {"tufe": 1203.00, "yiufe": 2020.50},
+    "2023-04": {"tufe": 1300.60, "yiufe": 2152.70},
+    "2023-06": {"tufe": 1351.59, "yiufe": 2325.00},
+    "2023-12": {"tufe": 1859.38, "yiufe": 2915.02},
     "2024-01": {"tufe": 1983.83, "yiufe": 2715.10},
-    "2024-06": {"tufe": 2320.10, "yiufe": 3280.40},
+    "2024-06": {"tufe": 2319.29, "yiufe": 3483.25},
     "2024-12": {"tufe": 2620.40, "yiufe": 3720.10},
     "2025-01": {"tufe": 2750.00, "yiufe": 3910.00},
     "2025-06": {"tufe": 3050.00, "yiufe": 4380.00},
     "2025-12": {"tufe": 3380.00, "yiufe": 4850.00},
     "2026-01": {"tufe": 3510.00, "yiufe": 5020.00},
     "2026-06": {"tufe": 3750.00, "yiufe": 5350.00},
+    "2026-09": {"tufe": 4368.35, "yiufe": 5901.26},
 }
 
-# --- Canlı Döviz Çekme Fonksiyonu ---
+# --- Canlı Döviz Çekme Fonksiyonu (USD & EUR) ---
 @st.cache_data(ttl=3600)
-def fetch_usd_rate(date_str):
+def fetch_currency_rates(date_str):
+    rates = {"USD": 35.0, "EUR": 38.0}
     try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=TRY"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data["rates"]["TRY"]
+        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=TRY,EUR"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            rates["USD"] = data["rates"]["TRY"]
+            rates["EUR"] = data["rates"]["TRY"] / data["rates"]["EUR"]
+            return rates
     except Exception:
         pass
-    
-    try:
-        url_alt = f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/usd.json"
-        res_alt = requests.get(url_alt, timeout=5)
-        if res_alt.status_code == 200:
-            return res_alt.json()["usd"]["try"]
-    except Exception:
-        pass
-        
-    return 35.0
+    return rates
 
 def get_closest_index(date_obj):
     ym = date_obj.strftime("%Y-%m")
@@ -55,30 +54,30 @@ def get_closest_index(date_obj):
     )
     return EMBEDDED_INDEXES[closest_key]
 
-# --- Arayüz / Başlık ---
-st.title("📊 İhale & Satın Alma Fiyat Analiz Sistemi")
-st.caption("Python & Streamlit Tabanlı Reel Teklif Güncelleme ve Maliyet Portalı")
+# --- Arayüz Başlığı ---
+st.title("⚖️ Kamu İhale & Doğrudan Temin Fiyat Analiz Portalı")
+st.caption("Kamu Alımları İçin Ekonomik Göstergelere Dayalı Fiyat Araştırması")
 
 st.divider()
 
-# --- Sol Panel (Girdiler) ---
-col_in1, col_in2 = st.columns([1, 1])
+# --- Girdiler ---
+col_in1, col_in2 = st.columns(2)
 
 with col_in1:
-    st.subheader("📝 Teklif & Tarih Bilgileri")
-    initial_date = st.date_input("Son alım Tarihi", date(2024, 1, 15), format="DD/MM/YYYY")
-    initial_price = st.number_input("Son alım Fiyatı (₺)", min_value=0.0, value=1000000.0, step=10000.0)
+    st.subheader("📝 Geçmiş Alım Bilgileri")
+    initial_date = st.date_input("Son Alım Tarihi", date(2023, 4, 17), format="DD/MM/YYYY")
+    initial_price = st.number_input("Son Alım Birim Fiyatı (₺)", min_value=0.0, value=94.0, step=1.0)
 
 with col_in2:
-    st.subheader("📅 Güncelleme / İhale Bilgileri")
+    st.subheader("📅 Güncel Teklif Bilgileri")
     tender_date = st.date_input("İhale / Güncelleme Tarihi", date.today(), format="DD/MM/YYYY")
-    new_offer_price = st.number_input("Yeni Firma Teklifi (₺)", min_value=0.0, value=1520000.0, step=10000.0)
+    new_offer_price = st.number_input("Yeni Firma Teklif Fiyatı (₺)", min_value=0.0, value=314.0, step=1.0)
 
 initial_date_str = initial_date.strftime("%Y-%m-%d")
 tender_date_str = tender_date.strftime("%Y-%m-%d")
 
-usd_initial = fetch_usd_rate(initial_date_str)
-usd_tender = fetch_usd_rate(tender_date_str)
+rates_initial = fetch_currency_rates(initial_date_str)
+rates_tender = fetch_currency_rates(tender_date_str)
 
 idx_initial = get_closest_index(initial_date)
 idx_tender = get_closest_index(tender_date)
@@ -86,69 +85,61 @@ idx_tender = get_closest_index(tender_date)
 st.divider()
 
 # --- Ekonomik Göstergeler ---
-st.subheader("📈 Ekonomik Göstergeler (Canlı & Otomatik)")
-col_g1, col_g2, col_g3 = st.columns(3)
+st.subheader("📈 Ekonomik Göstergeler")
+col_g1, col_g2, col_g3, col_g4 = st.columns(4)
 
 with col_g1:
     st.markdown("**USD / TRY Kuru**")
-    u_init = st.number_input("Son Teklif Tarih USD", value=float(usd_initial), format="%.2f")
-    u_tend = st.number_input("İhale Tarihi USD", value=float(usd_tender), format="%.2f")
+    u_init = st.number_input("Geçmiş USD", value=float(rates_initial["USD"]), format="%.4f")
+    u_tend = st.number_input("Güncel USD", value=float(rates_tender["USD"]), format="%.4f")
 
 with col_g2:
-    st.markdown("**Yİ-ÜFE Endeksi**")
-    yi_init = st.number_input("Son Teklif Yİ-ÜFE", value=float(idx_initial["yiufe"]), format="%.1f")
-    yi_tend = st.number_input("İhale Yİ-ÜFE", value=float(idx_tender["yiufe"]), format="%.1f")
+    st.markdown("**EUR / TRY Kuru**")
+    e_init = st.number_input("Geçmiş EUR", value=float(rates_initial["EUR"]), format="%.4f")
+    e_tend = st.number_input("Güncel EUR", value=float(rates_tender["EUR"]), format="%.4f")
 
 with col_g3:
+    st.markdown("**Yİ-ÜFE Endeksi**")
+    yi_init = st.number_input("Geçmiş Yİ-ÜFE", value=float(idx_initial["yiufe"]), format="%.2f")
+    yi_tend = st.number_input("Güncel Yİ-ÜFE", value=float(idx_tender["yiufe"]), format="%.2f")
+
+with col_g4:
     st.markdown("**TÜFE Endeksi**")
-    tu_init = st.number_input("Son Teklif TÜFE", value=float(idx_initial["tufe"]), format="%.1f")
-    tu_tend = st.number_input("İhale TÜFE", value=float(idx_tender["tufe"]), format="%.1f")
+    tu_init = st.number_input("Geçmiş TÜFE", value=float(idx_initial["tufe"]), format="%.2f")
+    tu_tend = st.number_input("Güncel TÜFE", value=float(idx_tender["tufe"]), format="%.2f")
+
+# --- Ek Risk / Vade Primi ---
+include_vade_risk = st.checkbox("18 Ay Vade Risk Primini Fiyata Dahil Et (%10 Esneklik/Finansman Yükü)", value=True)
+vade_katsayisi = 1.10 if include_vade_risk else 1.00
 
 # --- Hesaplamalar ---
 usd_updated = initial_price * (u_tend / u_init) if u_init > 0 else 0
+eur_updated = initial_price * (e_tend / e_init) if e_init > 0 else 0
 yiufe_updated = initial_price * (yi_tend / yi_init) if yi_init > 0 else 0
 tufe_updated = initial_price * (tu_tend / tu_init) if tu_init > 0 else 0
 
+firm_increase = ((new_offer_price - initial_price) / initial_price) * 100 if initial_price > 0 else 0
+tufe_increase = ((tu_tend - tu_init) / tu_init) * 100 if tu_init > 0 else 0
+
 st.divider()
 
-# --- Referans Seçimi ve Karşılaştırma ---
-st.subheader("🎯 Değerlendirme & Analiz")
+# --- Değerlendirme Bölümü ---
+st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
 
-ref_option = st.selectbox(
-    "Önerilen Makul Fiyat İçin Referans Gösterge Yöntemi:",
-    ["Yİ-ÜFE Bazlı (Sanayi/İhale Standartı)", "TÜFE Bazlı (Tüketici Enflasyonu)", "USD Dolar Kuru Bazlı", "Eşit Ağırlıklı Ortalama"]
-)
+lower_bound = min(usd_updated, yiufe_updated)
+upper_bound = tufe_updated * vade_katsayisi
 
-if "Yİ-ÜFE" in ref_option:
-    recommended_price = yiufe_updated
-elif "TÜFE" in ref_option:
-    recommended_price = tufe_updated
-elif "USD" in ref_option:
-    recommended_price = usd_updated
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Firma Artış Oranı", f"%{firm_increase:.2f}")
+m2.metric("Alt Makul Sınır (USD/Yİ-ÜFE)", f"{lower_bound:,.2f} ₺")
+m3.metric("Üst Makul Sınır (TÜFE/Vade)", f"{upper_bound:,.2f} ₺")
+m4.metric("Firma Teklifi", f"{new_offer_price:,.2f} ₺")
+
+if new_offer_price <= lower_bound:
+    st.success("✅ **SONUÇ: UYGUN** — Firma teklifi tüm ekonomik göstergelerin ve piyasa taban fiyatının altındadır.")
+elif new_offer_price <= upper_bound:
+    st.info("⚠️ **SONUÇ: SINIRDA UYGUN** — Firma teklifi tüketici enflasyonu (TÜFE) ve vade risk prim sınırları içerisindedir.")
+elif new_offer_price <= upper_bound * 1.15:
+    st.warning("⚡ **SONUÇ: YÜKSEK** — Teklif ekonomik göstergelerin üzerindedir. Pazarlık yapılması önerilir.")
 else:
-    recommended_price = (usd_updated + yiufe_updated + tufe_updated) / 3
-
-real_increase = ((new_offer_price - recommended_price) / recommended_price) * 100 if recommended_price > 0 else 0
-
-# --- Sonuç Rozetleri ---
-m1, m2, m3 = st.columns(3)
-m1.metric("Önerilen Makul Fiyat", f"{recommended_price:,.2f} ₺")
-m2.metric("Yeni Firma Teklifi", f"{new_offer_price:,.2f} ₺")
-m3.metric("Reel Artış / Fark", f"%{real_increase:.2f}", delta=f"{real_increase:.2f}%", delta_color="inverse")
-
-# --- Değerlendirme Mesajı ---
-if real_increase <= 0:
-    st.success(f"✅ **UYGUN TEKLİF:** Firma teklifi makul fiyatın %{abs(real_increase):.2f} altındadır. Kabul edilebilir.")
-elif real_increase <= 10:
-    st.warning(f"⚠️ **YÜKSEK TEKLİF:** Firma teklifi piyasa maliyet artışının %{real_increase:.2f} üzerindedir. Pazarlık önerilir.")
-else:
-    st.error(f"🚨 **ÇOK YÜKSEK TEKLİF:** Firma teklifi piyasa koşullarının %{real_increase:.2f} üzerindedir. Detaylı analiz istenmelidir.")
-
-# --- Plotly Görsel Grafik ---
-df_chart = pd.DataFrame({
-    'Gösterge': ['İlk Fiyat', 'Yİ-ÜFE İle', 'TÜFE İle', 'USD İle', 'Önerilen Fiyat', 'Yeni Teklif'],
-    'Tutar (₺)': [initial_price, yiufe_updated, tufe_updated, usd_updated, recommended_price, new_offer_price]
-})
-
-fig = px.bar(df_chart, x='Gösterge', y='Tutar (₺)', color='Gösterge', title="Fiyat Karşılaştırma Grafiği", text_auto='.2s')
-st.plotly_chart(fig, use_container_width=True)
+    st.error("🚨 **SONUÇ: ÇOK YÜKSEK** — Teklif makul piyasa şartlarının belirgin şekilde üzerindedir.")
