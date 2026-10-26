@@ -48,12 +48,11 @@ def fetch_currency_rates(date_str):
     return rates
 
 
-# --- TCMB EVDS API Üzerinden Güvenli TÜFE ve Yİ-ÜFE Çekme ---
+# --- TCMB EVDS API Üzerinden Akıllı Endeks Çekme ---
 @st.cache_data(ttl=86400)
 def fetch_evds_indexes(start_date, end_date):
-    # Güvenli varsayılan değerler (Bağlantı sorunu olursa sistem kilitlenmez)
     fallback_init = {"tufe": 1300.60, "yiufe": 2152.70}
-    fallback_tend = {"tufe": 4450.00, "yiufe": 6000.00}
+    fallback_tend = {"tufe": 3510.00, "yiufe": 5020.00}
 
     try:
         start_str = start_date.strftime("%d-%m-%Y")
@@ -61,14 +60,21 @@ def fetch_evds_indexes(start_date, end_date):
         
         url = f"https://evds2.tcmb.gov.tr/service/evds/series=TP.FG.J0,TP.WI.YI01&startDate={start_str}&endDate={end_str}&type=json"
         headers = {"key": EVDS_KEY}
-        res = requests.get(url, headers=headers, timeout=4)
+        res = requests.get(url, headers=headers, timeout=5)
         
         if res.status_code == 200:
             items = res.json().get("items", [])
-            if items and len(items) > 0:
+            if items:
+                # Boş olmayan en son geçerli veriyi bulmak için tersten arayabiliriz veya ilk/son kaydı alabiliriz
                 first_item = items[0]
                 last_item = items[-1]
                 
+                # Eğer son kayıtta değer boş dönerse listedeki dolu olan son kaydı bul
+                for item in reversed(items):
+                    if item.get("TP_FG_J0") and item.get("TP_WI_YI01"):
+                        last_item = item
+                        break
+
                 init_vals = {
                     "tufe": float(first_item.get("TP_FG_J0") or fallback_init["tufe"]),
                     "yiufe": float(first_item.get("TP_WI_YI01") or fallback_init["yiufe"])
@@ -183,7 +189,7 @@ st.divider()
 # --- Değerlendirme Bölümü ---
 st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
 
-lower_bound = min(usd_updated, yiufe_updated)
+lower_bound = min(usd_updated, yiufei_updated if 'yiufei_updated' in locals() else yiufe_updated)
 upper_bound = tufe_updated
 
 m1, m2, m3, m4 = st.columns(4)
