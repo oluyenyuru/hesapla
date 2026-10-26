@@ -155,13 +155,6 @@ with col_g4:
         "Güncel TÜFE", value=float(idx_tender["tufe"]), format="%.2f"
     )
 
-# --- Ek Risk / Vade Primi ---
-include_vade_risk = st.checkbox(
-    "18 Ay Vade Risk Primini Fiyata Dahil Et (%10 Esneklik/Finansman Yükü)",
-    value=True,
-)
-vade_katsayisi = 1.10 if include_vade_risk else 1.00
-
 # --- Fiyat Hesaplamaları ---
 usd_updated = initial_price * (u_tend / u_init) if u_init > 0 else 0
 eur_updated = initial_price * (e_tend / e_init) if e_init > 0 else 0
@@ -185,12 +178,12 @@ st.divider()
 st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
 
 lower_bound = min(usd_updated, yiufe_updated)
-upper_bound = tufe_updated * vade_katsayisi
+upper_bound = tufe_updated  # Vade primi kaldırıldı, üst sınır doğrudan TÜFE bazlı güncellendi
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Firma Artış Oranı", f"%{firm_increase:.2f}")
 m2.metric("Alt Makul Sınır (USD/Yİ-ÜFE)", f"{lower_bound:,.2f} ₺")
-m3.metric("Üst Makul Sınır (TÜFE/Vade)", f"{upper_bound:,.2f} ₺")
+m3.metric("Üst Makul Sınır (TÜFE)", f"{upper_bound:,.2f} ₺")
 m4.metric("Firma Teklifi", f"{new_offer_price:,.2f} ₺")
 
 if new_offer_price <= lower_bound:
@@ -201,7 +194,7 @@ if new_offer_price <= lower_bound:
 elif new_offer_price <= upper_bound:
     st.info(
         "⚠️ **SONUÇ: SINIRDA UYGUN** — Firma teklifi tüketici enflasyonu (TÜFE)"
-        " ve vade risk prim sınırları içerisindedir."
+        " sınırları içerisindedir."
     )
 elif new_offer_price <= upper_bound * 1.15:
     st.warning(
