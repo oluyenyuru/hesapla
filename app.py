@@ -1,283 +1,163 @@
 from datetime import date, datetime
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-# --- Sayfa Yapılandırması ---
+# ---------------------------------------------------
+# SAYFA AYARLARI
+# ---------------------------------------------------
 st.set_page_config(
     page_title="Kamu Doğrudan Temin & İhale Fiyat Analiz Sistemi",
     page_icon="⚖️",
     layout="wide",
 )
 
-# --- EVDS API Bilgileri ---
+# ---------------------------------------------------
+# EVDS API ANAHTARI
+# ---------------------------------------------------
 EVDS_KEY = "J12vgkw87j"
 
-# --- Canlı Döviz Çekme Fonksiyonu (USD & EUR - TRY Bazlı) ---
+# ---------------------------------------------------
+# DÖVİZ KURLARI
+# ---------------------------------------------------
 @st.cache_data(ttl=3600)
 def fetch_currency_rates(date_str):
-    rates = {"USD": 35.0, "EUR": 38.0}
+    """
+    Frankfurter API üzerinden USD/TRY ve EUR/TRY kurlarını çeker.
+    """
+
+    default_rates = {
+        "USD": 35.0,
+        "EUR": 38.0,
+    }
+
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=TRY,EUR"
-        res = requests.get(url, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            if "rates" in data:
-                rates["USD"] = data["rates"].get("TRY", rates["USD"])
-                eur_to_usd = data["rates"].get("EUR", 1.0)
-                if eur_to_usd > 0:
-                    rates["EUR"] = rates["USD"] / eur_to_usd
-                return rates
+
+        response = requests.get(url, timeout=5)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            usd_try = data["rates"].get("TRY")
+            usd_eur = data["rates"].get("EUR")
+
+            if usd_try and usd_eur:
+                eur_try = usd_try / usd_eur
+
+                return {
+                    "USD": usd_try,
+                    "EUR": eur_try,
+                }
+
     except Exception:
         pass
 
     try:
-        url_latest = "https://api.frankfurter.app/latest?from=USD&to=TRY,EUR"
-        res = requests.get(url_latest, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            if "rates" in data:
-                rates["USD"] = data["rates"].get("TRY", rates["USD"])
-                eur_to_usd = data["rates"].get("EUR", 1.0)
-                if eur_to_usd > 0:
-                    rates["EUR"] = rates["USD"] / eur_to_usd
+        url = "https://api.frankfurter.app/latest?from=USD&to=TRY,EUR"
+
+        response = requests.get(url, timeout=5)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            usd_try = data["rates"].get("TRY")
+            usd_eur = data["rates"].get("EUR")
+
+            if usd_try and usd_eur:
+                eur_try = usd_try / usd_eur
+
+                return {
+                    "USD": usd_try,
+                    "EUR": eur_try,
+                }
+
     except Exception:
         pass
 
-    return rates
+    return default_rates
 
 
-# --- TCMB EVDS API Üzerinden Otomatik Aylık Endeks Eşleme ---
+# ---------------------------------------------------
+# EVDS TÜFE / Yİ-ÜFE
+# ---------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_evds_indexes(start_date, end_date):
-    # Fallback (Bağlantı koparsa kullanılacak güvenli son değerler)
-    default_vals = {"tufe": 3510.00, "yiufe": 5020.00}
-    
+
+    default_vals = {
+        "tufe": 3510.00,
+        "yiufe": 5020.00
+    }
+
     try:
-        # Geniş bir tarih aralığı ve aylık frekans (frequency=5) ile verileri çek
-        url = "https://evds2.tcmb.gov.tr/service/evds/series=TP.FG.J0,TP.WI.YI01&startDate=01-01-2023&endDate=31-12-2030&frequency=5&type=json"
-        headers = {"key": EVDS_KEY}
-        res = requests.get(url, headers=headers, timeout=5)
-        
-        if res.status_code == 200:
-            items = res.json().get("items", [])
+
+        url = (
+            "https://evds2.tcmb.gov.tr/service/evds/"
+            "series=TP.FG.J0,TP.WI.YI01"
+            "&startDate=01-01-2023"
+            "&endDate=31-12-2030"
+            "&frequency=5"
+            "&type=json"
+        )
+
+        headers = {
+            "key": EVDS_KEY
+        }
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+
+            json_data = response.json()
+            items = json_data.get("items", [])
+
             if items:
+
                 index_dict = {}
+
                 for item in items:
-                    tarih_str = item.get("Tarih", "") # Örn: "2023-04" veya "2026-03"
-                    # Yıl ve ayı standart formata çevir
-                    if len(tarih_str) >= 7:
-                        ym = tarih_str[:7].replace(".", "-")
+
+                    tarih = item.get("Tarih", "")
+
+                    if len(tarih) >= 7:
+
+                        ym = tarih[:7].replace(".", "-")
+
                         try:
-                            tufe_val = float(item.get("TP_FG_J0") or 0)
-                            yiufe_val = float(item.get("TP_WI_YI01") or 0)
-                            if tufe_val > 0 and yiufe_val > 0:
-                                index_dict[ym] = {"tufe": tufe_val, "yiufe": yiufe_val}
-                        except ValueError:
+
+                            tufe_value = float(item.get("TP_FG_J0") or 0)
+                            yiufe_value = float(item.get("TP_WI_YI01") or 0)
+
+                            if tufe_value > 0 and yiufe_value > 0:
+
+                                index_dict[ym] = {
+                                    "tufe": tufe_value,
+                                    "yiufe": yiufe_value,
+                                }
+
+                        except Exception:
                             continue
-                
+
                 start_ym = start_date.strftime("%Y-%m")
                 end_ym = end_date.strftime("%Y-%m")
-                
-                # Seçilen tarihlere en yakın veya birebir aylık veriyi bul
-                init_vals = index_dict.get(start_ym)
-                tend_vals = index_dict.get(end_ym)
-                
-                # Eğer tam ay bulunamazsa sözlükteki en yakın/son geçerli ayı al
-                if not init_vals and index_dict:
-                    closest_init_key = min(index_dict.keys(), key=lambda k: abs((datetime.strptime(k, "%Y-%m").date() - start_date).days))
-                    init_vals = index_dict[closest_init_key]
-                
-                if not tend_vals and index_dict:
-                    closest_tend_key = max(index_dict.keys(), key=lambda k: datetime.strptime(k, "%Y-%m").date() if k <= end_ym else datetime.strptime("2023-01", "%Y-%m").date())
-                    tend_vals = index_dict.get(closest_tend_key, default_vals)
-                
-                return init_vals or default_vals, tend_vals or default_vals
-    except Exception:
-        pass
-        
-    return default_vals, default_vals
 
+                start_values = index_dict.get(start_ym)
+                end_values = index_dict.get(end_ym)
 
-# --- Arayüz Başlığı ---
-st.title("⚖️ Kamu İhale & Doğrudan Temin Fiyat Analiz Portalı")
-st.caption("TCMB EVDS ve Canlı Döviz Kurları Destekli Otomatik Fiyat Araştırması")
+                if not start_values and index_dict:
 
-st.divider()
-
-# --- Girdiler ---
-col_in1, col_in2 = st.columns(2)
-
-with col_in1:
-    st.subheader("📝 Geçmiş Alım Bilgileri")
-    initial_date = st.date_input(
-        "Son Alım Tarihi", date(2026, 3, 19), format="DD/MM/YYYY"
-    )
-    initial_price = st.number_input(
-        "Son Alım Birim Fiyatı (₺)", min_value=0.0, value=15000.0, step=100.0
-    )
-
-with col_in2:
-    st.subheader("📅 Güncel Teklif Bilgileri")
-    tender_date = st.date_input(
-        "İhale / Güncelleme Tarihi", date.today(), format="DD/MM/YYYY"
-    )
-    new_offer_price = st.number_input(
-        "Yeni Firma Teklif Fiyatı (₺)", min_value=0.0, value=16200.0, step=100.0
-    )
-
-initial_date_str = initial_date.strftime("%Y-%m-%d")
-tender_date_str = tender_date.strftime("%Y-%m-%d")
-
-rates_initial = fetch_currency_rates(initial_date_str)
-rates_tender = fetch_currency_rates(tender_date_str)
-
-idx_initial, idx_tender = fetch_evds_indexes(initial_date, tender_date)
-
-st.divider()
-
-# --- Ekonomik Göstergeler ---
-st.subheader("📈 Ekonomik Göstergeler (Otomatik EVDS & Döviz)")
-col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-
-with col_g1:
-    st.markdown("**USD / TRY Kuru**")
-    u_init = st.number_input(
-        "Geçmiş USD", value=float(rates_initial["USD"]), format="%.4f"
-    )
-    u_tend = st.number_input(
-        "Güncel USD", value=float(rates_tender["USD"]), format="%.4f"
-    )
-
-with col_g2:
-    st.markdown("**EUR / TRY Kuru**")
-    e_init = st.number_input(
-        "Geçmiş EUR", value=float(rates_initial["EUR"]), format="%.4f"
-    )
-    e_tend = st.number_input(
-        "Güncel EUR", value=float(rates_tender["EUR"]), format="%.4f"
-    )
-
-with col_g3:
-    st.markdown("**YI-ÜFE Endeksi (EVDS)**")
-    yi_init = st.number_input(
-        "Geçmiş YI-ÜFE", value=float(idx_initial["yiufe"]), format="%.2f"
-    )
-    yi_tend = st.number_input(
-        "Güncel YI-ÜFE", value=float(idx_tender["yiufe"]), format="%.2f"
-    )
-
-with col_g4:
-    st.markdown("**TÜFE Endeksi (EVDS)**")
-    tu_init = st.number_input(
-        "Geçmiş TÜFE", value=float(idx_initial["tufe"]), format="%.2f"
-    )
-    tu_tend = st.number_input(
-        "Güncel TÜFE", value=float(idx_tender["tufe"]), format="%.2f"
-    )
-
-# --- Fiyat Hesaplamaları ---
-usd_updated = initial_price * (u_tend / u_init) if u_init > 0 else 0
-eur_updated = initial_price * (e_tend / e_init) if e_init > 0 else 0
-yiufe_updated = initial_price * (yi_tend / yi_init) if yi_init > 0 else 0
-tufe_updated = initial_price * (tu_tend / tu_init) if tu_init > 0 else 0
-
-# --- Artış Oranı Hesaplamaları (%) ---
-firm_increase = (
-    ((new_offer_price - initial_price) / initial_price) * 100
-    if initial_price > 0
-    else 0
-)
-usd_increase = ((u_tend - u_init) / u_init) * 100 if u_init > 0 else 0
-eur_increase = ((e_tend - e_init) / e_init) * 100 if e_init > 0 else 0
-yiufe_increase = ((yi_tend - yi_init) / yi_init) * 100 if yi_init > 0 else 0
-tufe_increase = ((tu_tend - tu_init) / tu_init) * 100 if tu_init > 0 else 0
-
-st.divider()
-
-# --- Değerlendirme Bölümü ---
-st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
-
-lower_bound = min(usd_updated, yiufe_updated)
-upper_bound = tufe_updated
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Firma Artış Oranı", f"%{firm_increase:.2f}")
-m2.metric("Alt Makul Sınır (USD/Yİ-ÜFE)", f"{lower_bound:,.2f} ₺")
-m3.metric("Üst Makul Sınır (TÜFE)", f"{upper_bound:,.2f} ₺")
-m4.metric("Firma Teklifi", f"{new_offer_price:,.2f} ₺")
-
-if new_offer_price <= lower_bound:
-    st.success(
-        "✅ **SONUÇ: UYGUN** — Firma teklifi tüm ekonomik göstergelerin ve piyasa"
-        " taban fiyatının altındadır."
-    )
-elif new_offer_price <= upper_bound:
-    st.info(
-        "⚠️ **SONUÇ: SINIRDA UYGUN** — Firma teklifi tüketici enflasyonu (TÜFE)"
-        " sınırları içerisindedir."
-    )
-elif new_offer_price <= upper_bound * 1.15:
-    st.warning(
-        "⚡ **SONUÇ: YÜKSEK** — Teklif ekonomik göstergelerin üzerindedir."
-        " Pazarlık yapılması önerilir."
-    )
-else:
-    st.error(
-        "🚨 **SONUÇ: ÇOK YÜKSEK** — Teklif makul piyasa şartlarının belirgin"
-        " şekilde üzerindedir."
-    )
-
-st.divider()
-
-# --- Gösterge Artış Oranları & Fiyat Karşılaştırma Analizi ---
-st.subheader("📊 Ekonomik Gösterge Artış Oranları & Fiyat Karşılaştırması")
-
-c_a1, c_a2, c_a3, c_a4, c_a5 = st.columns(5)
-c_a1.metric("USD Artışı", f"%{usd_increase:.2f}")
-c_a2.metric("EUR Artışı", f"%{eur_increase:.2f}")
-c_a3.metric("Yİ-ÜFE Artışı", f"%{yiufe_increase:.2f}")
-c_a4.metric("TÜFE Artışı", f"%{tufe_increase:.2f}")
-c_a5.metric("Firma Teklif Artışı", f"%{firm_increase:.2f}", delta=f"{firm_increase - tufe_increase:.2f}% (TÜFE Farkı)")
-
-df_chart = pd.DataFrame({
-    "Gösterge": [
-        "Son Alım Fiyatı",
-        "USD Güncellenmiş",
-        "EUR Güncellenmiş",
-        "Yİ-ÜFE Güncellenmiş",
-        "TÜFE Güncellenmiş",
-        "Firma Teklifi",
-    ],
-    "Fiyat (₺)": [
-        initial_price,
-        usd_updated,
-        eur_updated,
-        yiufe_updated,
-        tufe_updated,
-        new_offer_price,
-    ],
-    "Artış Oranı (%)": [
-        0.0,
-        usd_increase,
-        eur_increase,
-        yiufe_increase,
-        tufe_increase,
-        firm_increase,
-    ],
-})
-
-fig = px.bar(
-    df_chart,
-    x="Gösterge",
-    y="Fiyat (₺)",
-    color="Gösterge",
-    text="Fiyat (₺)",
-    hover_data=["Artış Oranı (%)"],
-    title="Ekonomik Göstergelere Göre Uyarlanmış Fiyatlar ve Teklif Karşılaştırması",
-)
-fig.update_traces(texttemplate="%{y:,.2f} ₺", textposition="outside")
-fig.update_layout(showlegend=False, yaxis_title="Tutar (₺)", xaxis_title="")
-
-st.plotly_chart(fig, use_container_width=True)
+                    nearest_start = min(
+                        index_dict.keys(),
+                        key=lambda k: abs(
+                            (
+                                datetime.strptime(
+                                    k,
+                                    "%Y-%m"
+                                ).date()
+                        
