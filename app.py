@@ -48,46 +48,56 @@ def fetch_currency_rates(date_str):
     return rates
 
 
-# --- TCMB EVDS API Üzerinden Akıllı Endeks Çekme ---
+# --- TCMB EVDS API Üzerinden Otomatik Aylık Endeks Eşleme ---
 @st.cache_data(ttl=86400)
 def fetch_evds_indexes(start_date, end_date):
-    fallback_init = {"tufe": 1300.60, "yiufe": 2152.70}
-    fallback_tend = {"tufe": 3510.00, "yiufe": 5020.00}
-
+    # Fallback (Bağlantı koparsa kullanılacak güvenli son değerler)
+    default_vals = {"tufe": 3510.00, "yiufe": 5020.00}
+    
     try:
-        start_str = start_date.strftime("%d-%m-%Y")
-        end_str = end_date.strftime("%d-%m-%Y")
-        
-        url = f"https://evds2.tcmb.gov.tr/service/evds/series=TP.FG.J0,TP.WI.YI01&startDate={start_str}&endDate={end_str}&type=json"
+        # Geniş bir tarih aralığı ve aylık frekans (frequency=5) ile verileri çek
+        url = "https://evds2.tcmb.gov.tr/service/evds/series=TP.FG.J0,TP.WI.YI01&startDate=01-01-2023&endDate=31-12-2030&frequency=5&type=json"
         headers = {"key": EVDS_KEY}
         res = requests.get(url, headers=headers, timeout=5)
         
         if res.status_code == 200:
             items = res.json().get("items", [])
             if items:
-                # Boş olmayan en son geçerli veriyi bulmak için tersten arayabiliriz veya ilk/son kaydı alabiliriz
-                first_item = items[0]
-                last_item = items[-1]
+                index_dict = {}
+                for item in items:
+                    tarih_str = item.get("Tarih", "") # Örn: "2023-04" veya "2026-03"
+                    # Yıl ve ayı standart formata çevir
+                    if len(tarih_str) >= 7:
+                        ym = tarih_str[:7].replace(".", "-")
+                        try:
+                            tufe_val = float(item.get("TP_FG_J0") or 0)
+                            yiufe_val = float(item.get("TP_WI_YI01") or 0)
+                            if tufe_val > 0 and yiufe_val > 0:
+                                index_dict[ym] = {"tufe": tufe_val, "yiufe": yiufe_val}
+                        except ValueError:
+                            continue
                 
-                # Eğer son kayıtta değer boş dönerse listedeki dolu olan son kaydı bul
-                for item in reversed(items):
-                    if item.get("TP_FG_J0") and item.get("TP_WI_YI01"):
-                        last_item = item
-                        break
-
-                init_vals = {
-                    "tufe": float(first_item.get("TP_FG_J0") or fallback_init["tufe"]),
-                    "yiufe": float(first_item.get("TP_WI_YI01") or fallback_init["yiufe"])
-                }
-                tend_vals = {
-                    "tufe": float(last_item.get("TP_FG_J0") or fallback_tend["tufe"]),
-                    "yiufe": float(last_item.get("TP_WI_YI01") or fallback_tend["yiufe"])
-                }
-                return init_vals, tend_vals
+                start_ym = start_date.strftime("%Y-%m")
+                end_ym = end_date.strftime("%Y-%m")
+                
+                # Seçilen tarihlere en yakın veya birebir aylık veriyi bul
+                init_vals = index_dict.get(start_ym)
+                tend_vals = index_dict.get(end_ym)
+                
+                # Eğer tam ay bulunamazsa sözlükteki en yakın/son geçerli ayı al
+                if not init_vals and index_dict:
+                    closest_init_key = min(index_dict.keys(), key=lambda k: abs((datetime.strptime(k, "%Y-%m").date() - start_date).days))
+                    init_vals = index_dict[closest_init_key]
+                
+                if not tend_vals and index_dict:
+                    closest_tend_key = max(index_dict.keys(), key=lambda k: datetime.strptime(k, "%Y-%m").date() if k <= end_ym else datetime.strptime("2023-01", "%Y-%m").date())
+                    tend_vals = index_dict.get(closest_tend_key, default_vals)
+                
+                return init_vals or default_vals, tend_vals or default_vals
     except Exception:
         pass
         
-    return fallback_init, fallback_tend
+    return default_vals, default_vals
 
 
 # --- Arayüz Başlığı ---
@@ -102,10 +112,10 @@ col_in1, col_in2 = st.columns(2)
 with col_in1:
     st.subheader("📝 Geçmiş Alım Bilgileri")
     initial_date = st.date_input(
-        "Son Alım Tarihi", date(2023, 4, 17), format="DD/MM/YYYY"
+        "Son Alım Tarihi", date(2026, 3, 19), format="DD/MM/YYYY"
     )
     initial_price = st.number_input(
-        "Son Alım Birim Fiyatı (₺)", min_value=0.0, value=94.0, step=1.0
+        "Son Alım Birim Fiyatı (₺)", min_value=0.0, value=15000.0, step=100.0
     )
 
 with col_in2:
@@ -114,7 +124,7 @@ with col_in2:
         "İhale / Güncelleme Tarihi", date.today(), format="DD/MM/YYYY"
     )
     new_offer_price = st.number_input(
-        "Yeni Firma Teklif Fiyatı (₺)", min_value=0.0, value=314.0, step=1.0
+        "Yeni Firma Teklif Fiyatı (₺)", min_value=0.0, value=16200.0, step=100.0
     )
 
 initial_date_str = initial_date.strftime("%Y-%m-%d")
@@ -189,7 +199,7 @@ st.divider()
 # --- Değerlendirme Bölümü ---
 st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
 
-lower_bound = min(usd_updated, yiufei_updated if 'yiufei_updated' in locals() else yiufe_updated)
+lower_bound = min(usd_updated, yiufe_updated)
 upper_bound = tufe_updated
 
 m1, m2, m3, m4 = st.columns(4)
