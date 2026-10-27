@@ -1,458 +1,393 @@
-from datetime import date, datetime
+from datetime import date
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 
-# ---------------------------------------------------
+# -------------------------------------------------
 # SAYFA AYARLARI
-# ---------------------------------------------------
+# -------------------------------------------------
+
 st.set_page_config(
-    page_title="Kamu Doğrudan Temin & İhale Fiyat Analiz Sistemi",
+    page_title="Kamu İhale Fiyat Analiz Sistemi",
     page_icon="⚖️",
-    layout="wide",
+    layout="wide"
 )
 
-# ---------------------------------------------------
-# EVDS API ANAHTARI
-# ---------------------------------------------------
-EVDS_KEY = "J12vgkw87j"
+# -------------------------------------------------
+# ÖRNEK ENDEKS VERİLERİ
+# -------------------------------------------------
 
-# ---------------------------------------------------
-# DÖVİZ KURLARI
-# ---------------------------------------------------
-@st.cache_data(ttl=3600)
-def fetch_currency_rates(date_str):
-    """
-    Frankfurter API üzerinden USD/TRY ve EUR/TRY kurlarını çeker.
-    """
+EMBEDDED_INDEXES = {
+    "2023-01": {"tufe": 1203.00, "yiufe": 2020.50},
+    "2023-06": {"tufe": 1351.59, "yiufe": 2325.00},
+    "2023-12": {"tufe": 1859.38, "yiufe": 2915.02},
+    "2024-06": {"tufe": 2319.29, "yiufe": 3483.25},
+    "2024-12": {"tufe": 2620.40, "yiufe": 3720.10},
+    "2025-06": {"tufe": 3050.00, "yiufe": 4380.00},
+    "2025-12": {"tufe": 3380.00, "yiufe": 4850.00},
+    "2026-06": {"tufe": 3750.00, "yiufe": 5350.00},
+}
 
-    default_rates = {
-        "USD": 35.0,
-        "EUR": 38.0,
-    }
+# -------------------------------------------------
+# ENDEKS BUL
+# -------------------------------------------------
 
-    try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=TRY,EUR"
+def get_index(selected_date):
 
-        response = requests.get(url, timeout=5)
+    ym = selected_date.strftime("%Y-%m")
 
-        if response.status_code == 200:
-            data = response.json()
+    available = sorted(EMBEDDED_INDEXES.keys())
 
-            usd_try = data["rates"].get("TRY")
-            usd_eur = data["rates"].get("EUR")
+    previous = [k for k in available if k <= ym]
 
-            if usd_try and usd_eur:
-                eur_try = usd_try / usd_eur
+    if previous:
+        key = previous[-1]
+    else:
+        key = available[0]
 
-                return {
-                    "USD": usd_try,
-                    "EUR": eur_try,
-                }
-
-    except Exception:
-        pass
-
-    try:
-        url = "https://api.frankfurter.app/latest?from=USD&to=TRY,EUR"
-
-        response = requests.get(url, timeout=5)
-
-        if response.status_code == 200:
-            data = response.json()
-
-            usd_try = data["rates"].get("TRY")
-            usd_eur = data["rates"].get("EUR")
-
-            if usd_try and usd_eur:
-                eur_try = usd_try / usd_eur
-
-                return {
-                    "USD": usd_try,
-                    "EUR": eur_try,
-                }
-
-    except Exception:
-        pass
-
-    return default_rates
+    return key, EMBEDDED_INDEXES[key]
 
 
-# ---------------------------------------------------
-# EVDS TÜFE / Yİ-ÜFE
-# ---------------------------------------------------
-@st.cache_data(ttl=86400)
-def fetch_evds_indexes(start_date, end_date):
-
-    default_vals = {
-        "tufe": 3510.00,
-        "yiufe": 5020.00
-    }
-
-    try:
-
-        url = (
-            "https://evds2.tcmb.gov.tr/service/evds/"
-            "series=TP.FG.J0,TP.WI.YI01"
-            "&startDate=01-01-2023"
-            "&endDate=31-12-2030"
-            "&frequency=5"
-            "&type=json"
-        )
-
-        headers = {
-            "key": EVDS_KEY
-        }
-
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=10
-        )
-
-        if response.status_code == 200:
-
-            json_data = response.json()
-            items = json_data.get("items", [])
-
-            if items:
-
-                index_dict = {}
-
-                for item in items:
-
-                    tarih = item.get("Tarih", "")
-
-                    if len(tarih) >= 7:
-
-                        ym = tarih[:7].replace(".", "-")
-
-                        try:
-
-                            tufe_value = float(item.get("TP_FG_J0") or 0)
-                            yiufe_value = float(item.get("TP_WI_YI01") or 0)
-
-                            if tufe_value > 0 and yiufe_value > 0:
-
-                                index_dict[ym] = {
-                                    "tufe": tufe_value,
-                                    "yiufe": yiufe_value,
-                                }
-
-                        except Exception:
-                            continue
-
-                start_ym = start_date.strftime("%Y-%m")
-                end_ym = end_date.strftime("%Y-%m")
-
-                start_values = index_dict.get(start_ym)
-                end_values = index_dict.get(end_ym)
-
-                if not start_values and index_dict:
-
-                    nearest_start = min(
-                        index_dict.keys(),
-                        key=lambda k: abs(
-                            (
-                                datetime.strptime(
-                                    k,
-                                    "%Y-%m"
-                                ).date()
-                                - start_date
-                            ).days
-                        )
-                    )
-
-                    start_values = index_dict[nearest_start]
-
-                if not end_values and index_dict:
-
-                    available_dates = sorted(index_dict.keys())
-
-                    nearest_end = available_dates[-1]
-
-                    for item in available_dates:
-                        if item <= end_ym:
-                            nearest_end = item
-
-                    end_values = index_dict[nearest_end]
-
-                return (
-                    start_values or default_vals,
-                    end_values or default_vals,
-                )
-
-    except Exception:
-        pass
-
-    return default_vals, default_vals
-
-
-# ---------------------------------------------------
+# -------------------------------------------------
 # BAŞLIK
-# ---------------------------------------------------
-st.title("⚖️ Kamu İhale & Doğrudan Temin Fiyat Analiz Portalı")
+# -------------------------------------------------
+
+st.title("⚖️ Kamu İhale & Doğrudan Temin Fiyat Analiz Sistemi")
 
 st.caption(
-    "TCMB EVDS ve Canlı Döviz Kurları Destekli Otomatik Fiyat Araştırması"
+    "Ekonomik göstergelere göre güncellenmiş piyasa fiyat analizi"
 )
+
+# -------------------------------------------------
+# YAN MENÜ
+# -------------------------------------------------
+
+with st.sidebar:
+
+    st.header("⚙️ Ayarlar")
+
+    vade_riski = st.slider(
+        "Vade / Finansman Riski (%)",
+        min_value=0.0,
+        max_value=30.0,
+        value=10.0,
+        step=0.5
+    )
+
+# -------------------------------------------------
+# GİRDİLER
+# -------------------------------------------------
 
 st.divider()
 
-# ---------------------------------------------------
-# GİRDİ ALANLARI
-# ---------------------------------------------------
-with st.form("hesaplama_formu"):
+col1, col2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
+with col1:
 
-    with col1:
+    st.subheader("📝 Geçmiş Alım")
 
-        st.subheader("📝 Geçmiş Alım Bilgileri")
-
-        initial_date = st.date_input(
-            "Son Alım Tarihi",
-            value=date.today().replace(year=date.today().year - 1),
-            format="DD/MM/YYYY",
-        )
-
-        initial_price = st.number_input(
-            "Son Alım Birim Fiyatı (₺)",
-            min_value=0.0,
-            value=15000.0,
-            step=100.0,
-        )
-
-    with col2:
-
-        st.subheader("📅 Güncel Teklif Bilgileri")
-
-        tender_date = st.date_input(
-            "İhale / Güncelleme Tarihi",
-            value=date.today(),
-            format="DD/MM/YYYY",
-        )
-
-        new_offer_price = st.number_input(
-            "Yeni Firma Teklif Fiyatı (₺)",
-            min_value=0.0,
-            value=16200.0,
-            step=100.0,
-        )
-
-    calculate = st.form_submit_button("📊 Analizi Hesapla")
-
-# ---------------------------------------------------
-# HESAPLAMA
-# ---------------------------------------------------
-if calculate:
-
-    initial_date_str = initial_date.strftime("%Y-%m-%d")
-    tender_date_str = tender_date.strftime("%Y-%m-%d")
-
-    rates_initial = fetch_currency_rates(initial_date_str)
-    rates_tender = fetch_currency_rates(tender_date_str)
-
-    idx_initial, idx_tender = fetch_evds_indexes(
-        initial_date,
-        tender_date,
+    initial_date = st.date_input(
+        "Son Alım Tarihi",
+        value=date(2023, 4, 17)
     )
 
-    st.divider()
-
-    st.subheader("📈 Ekonomik Göstergeler")
-
-    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-
-    with col_g1:
-        u_init = rates_initial["USD"]
-        u_tend = rates_tender["USD"]
-
-        st.metric(
-            "USD/TRY",
-            f"{u_tend:.4f}",
-            f"%{((u_tend-u_init)/u_init)*100:.2f}",
-        )
-
-    with col_g2:
-        e_init = rates_initial["EUR"]
-        e_tend = rates_tender["EUR"]
-
-        st.metric(
-            "EUR/TRY",
-            f"{e_tend:.4f}",
-            f"%{((e_tend-e_init)/e_init)*100:.2f}",
-        )
-
-    with col_g3:
-
-        yi_init = idx_initial["yiufe"]
-        yi_tend = idx_tender["yiufe"]
-
-        st.metric(
-            "Yİ-ÜFE",
-            f"{yi_tend:.2f}",
-            f"%{((yi_tend-yi_init)/yi_init)*100:.2f}",
-        )
-
-    with col_g4:
-
-        tu_init = idx_initial["tufe"]
-        tu_tend = idx_tender["tufe"]
-
-        st.metric(
-            "TÜFE",
-            f"{tu_tend:.2f}",
-            f"%{((tu_tend-tu_init)/tu_init)*100:.2f}",
-        )
-
-    # ---------------------------------------------------
-    # FİYAT GÜNCELLEMELERİ
-    # ---------------------------------------------------
-
-    usd_updated = initial_price * (u_tend / u_init)
-    eur_updated = initial_price * (e_tend / e_init)
-    yiufe_updated = initial_price * (yi_tend / yi_init)
-    tufe_updated = initial_price * (tu_tend / tu_init)
-
-    firm_increase = (
-        (new_offer_price - initial_price)
-        / initial_price
-        * 100
+    initial_price = st.number_input(
+        "Son Alım Birim Fiyatı (₺)",
+        min_value=0.0,
+        value=94.0,
+        step=1.0
     )
 
-    usd_increase = (u_tend - u_init) / u_init * 100
-    eur_increase = (e_tend - e_init) / e_init * 100
-    yiufe_increase = (yi_tend - yi_init) / yi_init * 100
-    tufe_increase = (tu_tend - tu_init) / tu_init * 100
+with col2:
 
-    # ---------------------------------------------------
-    # MAKUL SINIRLAR
-    # ---------------------------------------------------
+    st.subheader("📅 Güncel Teklif")
 
-    lower_bound = (
-        usd_updated +
-        eur_updated +
-        yiufe_updated
-    ) / 3
-
-    upper_bound = max(
-        tufe_updated,
-        yiufe_updated
+    tender_date = st.date_input(
+        "İhale Tarihi",
+        value=date.today()
     )
 
-    st.divider()
-
-    st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
-        "Firma Artış Oranı",
-        f"%{firm_increase:.2f}"
+    new_offer_price = st.number_input(
+        "Firma Teklifi (₺)",
+        min_value=0.0,
+        value=314.0,
+        step=1.0
     )
 
-    c2.metric(
-        "Alt Makul Sınır",
-        f"{lower_bound:,.2f} ₺"
+if tender_date < initial_date:
+
+    st.error(
+        "İhale tarihi son alım tarihinden önce olamaz."
     )
 
-    c3.metric(
-        "Üst Makul Sınır",
-        f"{upper_bound:,.2f} ₺"
+    st.stop()
+
+# -------------------------------------------------
+# GÖSTERGELER
+# -------------------------------------------------
+
+st.divider()
+
+st.subheader("📈 Ekonomik Göstergeler")
+
+idx_key_old, idx_old = get_index(initial_date)
+idx_key_new, idx_new = get_index(tender_date)
+
+g1, g2, g3, g4 = st.columns(4)
+
+with g1:
+
+    usd_old = st.number_input(
+        "Geçmiş USD/TRY",
+        value=19.40,
+        format="%.4f"
     )
 
-    c4.metric(
+    usd_new = st.number_input(
+        "Güncel USD/TRY",
+        value=41.80,
+        format="%.4f"
+    )
+
+with g2:
+
+    eur_old = st.number_input(
+        "Geçmiş EUR/TRY",
+        value=21.00,
+        format="%.4f"
+    )
+
+    eur_new = st.number_input(
+        "Güncel EUR/TRY",
+        value=48.50,
+        format="%.4f"
+    )
+
+with g3:
+
+    yiufe_old = st.number_input(
+        "Geçmiş Yİ-ÜFE",
+        value=float(idx_old["yiufe"])
+    )
+
+    yiufe_new = st.number_input(
+        "Güncel Yİ-ÜFE",
+        value=float(idx_new["yiufe"])
+    )
+
+with g4:
+
+    tufe_old = st.number_input(
+        "Geçmiş TÜFE",
+        value=float(idx_old["tufe"])
+    )
+
+    tufe_new = st.number_input(
+        "Güncel TÜFE",
+        value=float(idx_new["tufe"])
+    )
+
+# -------------------------------------------------
+# HESAPLAR
+# -------------------------------------------------
+
+def update_price(base, old, new):
+
+    if old <= 0:
+        return None
+
+    return base * (new / old)
+
+
+usd_price = update_price(
+    initial_price,
+    usd_old,
+    usd_new
+)
+
+eur_price = update_price(
+    initial_price,
+    eur_old,
+    eur_new
+)
+
+yiufe_price = update_price(
+    initial_price,
+    yiufe_old,
+    yiufe_new
+)
+
+tufe_price = update_price(
+    initial_price,
+    tufe_old,
+    tufe_new
+)
+
+economic_values = [
+    usd_price,
+    eur_price,
+    yiufe_price,
+    tufe_price
+]
+
+economic_values = [
+    x for x in economic_values
+    if x is not None
+]
+
+lower_bound = min(economic_values)
+
+reference_price = (
+    sum(economic_values)
+    / len(economic_values)
+)
+
+upper_bound = (
+    max(economic_values)
+    * (1 + vade_riski / 100)
+)
+
+# -------------------------------------------------
+# SONUÇ
+# -------------------------------------------------
+
+st.divider()
+
+st.subheader("🎯 Piyasa Fiyat Araştırma Sonucu")
+
+m1, m2, m3, m4 = st.columns(4)
+
+firma_artisi = (
+    (new_offer_price - initial_price)
+    / initial_price
+    * 100
+)
+
+m1.metric(
+    "Firma Artış Oranı",
+    f"%{firma_artisi:.2f}"
+)
+
+m2.metric(
+    "Alt Makul Sınır",
+    f"{lower_bound:,.2f} ₺"
+)
+
+m3.metric(
+    "Referans Fiyat",
+    f"{reference_price:,.2f} ₺"
+)
+
+m4.metric(
+    "Üst Makul Sınır",
+    f"{upper_bound:,.2f} ₺"
+)
+
+# -------------------------------------------------
+# KARAR
+# -------------------------------------------------
+
+if lower_bound <= new_offer_price <= upper_bound:
+
+    st.success(
+        "✅ SONUÇ: UYGUN"
+    )
+
+elif new_offer_price < lower_bound:
+
+    st.info(
+        "ℹ️ SONUÇ: DÜŞÜK"
+    )
+
+elif new_offer_price <= upper_bound * 1.15:
+
+    st.warning(
+        "⚠️ SONUÇ: YÜKSEK"
+    )
+
+else:
+
+    st.error(
+        "🚨 SONUÇ: ÇOK YÜKSEK"
+    )
+
+# -------------------------------------------------
+# TABLO
+# -------------------------------------------------
+
+df = pd.DataFrame({
+    "Gösterge": [
+        "USD",
+        "EUR",
+        "Yİ-ÜFE",
+        "TÜFE",
+        "Referans Fiyat",
         "Firma Teklifi",
-        f"{new_offer_price:,.2f} ₺"
-    )
+    ],
+    "Tutar": [
+        usd_price,
+        eur_price,
+        yiufe_price,
+        tufe_price,
+        reference_price,
+        new_offer_price,
+    ]
+})
 
-    if new_offer_price <= lower_bound:
+st.divider()
 
-        st.success(
-            "✅ SONUÇ: UYGUN"
-        )
+st.subheader("📋 Karşılaştırma Tablosu")
 
-    elif new_offer_price <= upper_bound:
+st.dataframe(
+    df.style.format(
+        {"Tutar": "{:,.2f} ₺"}
+    ),
+    use_container_width=True
+)
 
-        st.info(
-            "⚠️ SONUÇ: SINIRDA UYGUN"
-        )
+# -------------------------------------------------
+# GRAFİK
+# -------------------------------------------------
 
-    elif new_offer_price <= upper_bound * 1.15:
+fig = px.bar(
+    df,
+    x="Gösterge",
+    y="Tutar",
+    color="Gösterge",
+    text_auto=".2f"
+)
 
-        st.warning(
-            "⚡ SONUÇ: YÜKSEK - Pazarlık önerilir."
-        )
+fig.add_hline(
+    y=lower_bound,
+    line_color="green",
+    line_dash="dot",
+    annotation_text="Alt Sınır"
+)
 
-    else:
+fig.add_hline(
+    y=reference_price,
+    line_color="blue",
+    annotation_text="Referans Fiyat"
+)
 
-        st.error(
-            "🚨 SONUÇ: ÇOK YÜKSEK"
-        )
+fig.add_hline(
+    y=upper_bound,
+    line_color="red",
+    line_dash="dash",
+    annotation_text="Üst Sınır"
+)
 
-    # ---------------------------------------------------
-    # GRAFİK
-    # ---------------------------------------------------
+fig.update_layout(
+    showlegend=False,
+    height=500
+)
 
-    st.divider()
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
 
-    df_chart = pd.DataFrame(
-        {
-            "Gösterge": [
-                "Son Alım",
-                "USD",
-                "EUR",
-                "Yİ-ÜFE",
-                "TÜFE",
-                "Firma Teklifi",
-            ],
-            "Fiyat": [
-                initial_price,
-                usd_updated,
-                eur_updated,
-                yiufe_updated,
-                tufe_updated,
-                new_offer_price,
-            ],
-        }
-    )
-
-    fig = px.bar(
-        df_chart,
-        x="Gösterge",
-        y="Fiyat",
-        color="Gösterge",
-        text="Fiyat",
-        title="Güncellenmiş Fiyat Karşılaştırması",
-    )
-
-    fig.update_traces(
-        texttemplate="%{y:,.2f} ₺",
-        textposition="outside",
-    )
-
-    fig.add_hline(
-        y=lower_bound,
-        line_dash="dot",
-        annotation_text="Alt Makul Sınır",
-    )
-
-    fig.add_hline(
-        y=upper_bound,
-        line_dash="dash",
-        annotation_text="Üst Makul Sınır",
-    )
-
-    fig.update_layout(
-        showlegend=False,
-        yaxis_title="Tutar (₺)",
-        xaxis_title=""
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+st.caption(
+    "Bu sistem karar destek amaçlıdır. Nihai değerlendirme ilgili mevzuat ve piyasa araştırması tutanakları dikkate alınarak yapılmalıdır."
+)
