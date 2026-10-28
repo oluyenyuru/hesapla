@@ -1,10 +1,12 @@
 import os
+import ssl
 from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+from requests.adapters import HTTPAdapter
 
 # -------------------------------------------------
 # SAYFA AYARLARI
@@ -22,7 +24,7 @@ st.set_page_config(
 #   1) .streamlit/secrets.toml  ->  EVDS_API_KEY = "..."
 #   2) Ortam değişkeni EVDS_API_KEY
 #   3) Yan menüdeki giriş kutusu
-EVDS_BASE = "https://evds2.tcmb.gov.tr/service/evds/"
+EVDS_BASE = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
 
 # Seri kodlarını EVDS'deki "Veri Kategorileri" bölümünden doğrulayın.
 # TÜİK endeks bazı değişirse (ör. 2025=100) yeni seri kodu gerekebilir.
@@ -41,8 +43,22 @@ def get_api_key():
     return os.environ.get("EVDS_API_KEY", "")
 
 
+class LegacySSLAdapter(HTTPAdapter):
+    """TCMB sunucusu eski SSL ayarı gerektirebilir."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        try:
+            ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+        except ssl.SSLError:
+            pass
+        ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+
 def evds_request(api_key, series, start, end, frequency=None):
-    """EVDS'den seriyi çeker, DataFrame döndürür. Hata olursa istisna fırlatır."""
+    """EVDS v3'ten seriyi çeker, DataFrame döndürür. Hata olursa açıklayıcı istisna fırlatır."""
     url = (
         f"{EVDS_BASE}series={series}"
         f"&startDate={start.strftime('%d-%m-%Y')}"
@@ -51,9 +67,21 @@ def evds_request(api_key, series, start, end, frequency=None):
     )
     if frequency:
         url += f"&frequency={frequency}"
-    res = requests.get(url, headers={"key": api_key}, timeout=15)
-    res.raise_for_status()
-    items = res.json().get("items", [])
+    session = requests.Session()
+    session.mount("https://", LegacySSLAdapter())
+    res = session.get(
+        url,
+        headers={"key": api_key, "Accept": "application/json"},
+        timeout=20,
+    )
+    ctype = res.headers.get("Content-Type", "")
+    if res.status_code != 200 or "json" not in ctype.lower():
+        snippet = res.text[:150].replace("\n", " ")
+        raise RuntimeError(
+            f"EVDS beklenmeyen yanıt verdi (HTTP {res.status_code}, {ctype or 'içerik türü yok'}): {snippet}"
+        )
+    data = res.json()
+    items = data.get("items", []) if isinstance(data, dict) else data
     return pd.DataFrame(items)
 
 
