@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from requests.adapters import HTTPAdapter
 
 # -------------------------------------------------
@@ -157,6 +158,8 @@ with st.sidebar:
         [
             "Yİ-ÜFE (Üretici Fiyat Endeksi)",
             "TÜFE (Tüketici Fiyat Endeksi)",
+            "Dolar (USD/TRY Kuru)",
+            "Ortalama (Yİ-ÜFE, TÜFE ve Dolar)",
         ],
     )
     yasal_tolerans = st.slider(
@@ -170,6 +173,40 @@ with st.sidebar:
             " hükmüne dayanmaz. Kurumunuzun kendi kuralını girin."
         ),
     )
+
+# -------------------------------------------------
+# YAN MENÜYÜ 5 SANİYE SONRA OTOMATİK KAPAT (oturumda bir kez)
+# -------------------------------------------------
+components.html(
+    """
+    <script>
+    (function () {
+      const w = window.parent;
+      if (w.__sidebarAutoClosed) return;
+      setTimeout(function () {
+        if (w.__sidebarAutoClosed) return;
+        const doc = w.document;
+        const sb = doc.querySelector('section[data-testid="stSidebar"]');
+        if (sb && sb.getAttribute("aria-expanded") === "false") {
+          w.__sidebarAutoClosed = true;
+          return;
+        }
+        const selectors = [
+          '[data-testid="stSidebarCollapseButton"] button',
+          'button[data-testid="stSidebarCollapseButton"]',
+          '[data-testid="stSidebarCollapseButton"]',
+          '[data-testid="baseButton-header"]'
+        ];
+        for (const sel of selectors) {
+          const btn = doc.querySelector(sel);
+          if (btn) { btn.click(); w.__sidebarAutoClosed = true; break; }
+        }
+      }, 5000);
+    })();
+    </script>
+    """,
+    height=0,
+)
 
 # -------------------------------------------------
 # GİRDİLER
@@ -318,12 +355,28 @@ if fx_ok and fx_old and fx_new and not (man_usd_old or man_usd_new):
 yiufe_price = initial_price * (yiufe_new / yiufe_old)
 tufe_price = initial_price * (tufe_new / tufe_old)
 
-if "Yİ-ÜFE" in baz_gosterge:
+usd_price = initial_price * (usd_new / usd_old) if fx_ok else None
+
+if baz_gosterge.startswith("Yİ-ÜFE"):
     aktif_baz_fiyat = yiufe_price
-    resmi_artis = pct(yiufe_new, yiufe_old)
-else:
+elif baz_gosterge.startswith("TÜFE"):
     aktif_baz_fiyat = tufe_price
-    resmi_artis = pct(tufe_new, tufe_old)
+else:
+    if not fx_ok:
+        st.error(
+            "Seçilen gösterge için kur verisi gerekli ancak bulunamadı."
+            " Kurları elle girin veya Yİ-ÜFE / TÜFE seçeneğini kullanın."
+        )
+        st.stop()
+    if baz_gosterge.startswith("Dolar"):
+        aktif_baz_fiyat = usd_price
+    else:
+        aktif_baz_fiyat = (yiufe_price + tufe_price + usd_price) / 3
+
+resmi_artis = pct(aktif_baz_fiyat, initial_price)
+ortalama_fiyat = (
+    (yiufe_price + tufe_price + usd_price) / 3 if fx_ok else None
+)
 
 max_makul_sinir = aktif_baz_fiyat * (1 + yasal_tolerans / 100)
 firma_artis_orani = pct(new_offer_price, initial_price)
@@ -335,7 +388,7 @@ st.divider()
 st.subheader("🎯 Fiyat Kontrol Sonucu")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Firma Artış Oranı", f"%{firma_artis_orani:.2f}")
-m2.metric("Endeks Artışı", f"%{resmi_artis:.2f}")
+m2.metric("Seçili Gösterge Artışı", f"%{resmi_artis:.2f}")
 m3.metric("Tolerans Dahil Tavan Fiyat", f"{max_makul_sinir:,.2f} ₺")
 m4.metric("Firma Teklifi", f"{new_offer_price:,.2f} ₺")
 
@@ -371,24 +424,21 @@ else:
 # -------------------------------------------------
 # TABLO VE GRAFİK
 # -------------------------------------------------
-df = pd.DataFrame(
-    {
-        "Kriter": [
-            "Son Alım Fiyatı",
-            "Yİ-ÜFE Bazlı Güncel Fiyat",
-            "TÜFE Bazlı Güncel Fiyat",
-            "Tavan (+Tolerans)",
-            "Firma Teklifi",
-        ],
-        "Tutar (₺)": [
-            initial_price,
-            yiufe_price,
-            tufe_price,
-            max_makul_sinir,
-            new_offer_price,
-        ],
-    }
-)
+rows = [
+    ("Son Alım Fiyatı", initial_price),
+    ("Yİ-ÜFE Bazlı Güncel Fiyat", yiufe_price),
+    ("TÜFE Bazlı Güncel Fiyat", tufe_price),
+]
+if fx_ok:
+    rows += [
+        ("Dolar Bazlı Güncel Fiyat", usd_price),
+        ("Ortalama Bazlı Güncel Fiyat", ortalama_fiyat),
+    ]
+rows += [
+    ("Tavan (+Tolerans)", max_makul_sinir),
+    ("Firma Teklifi", new_offer_price),
+]
+df = pd.DataFrame(rows, columns=["Kriter", "Tutar (₺)"])
 
 st.divider()
 st.subheader("📋 Karşılaştırma Tablosu")
