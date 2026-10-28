@@ -6,7 +6,6 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from requests.adapters import HTTPAdapter
 
 # -------------------------------------------------
@@ -146,13 +145,16 @@ st.caption(
 )
 
 # -------------------------------------------------
-# YAN MENÜ
+# DENETİM AYARLARI (ana sayfada)
 # -------------------------------------------------
-with st.sidebar:
-    st.header("⚙️ Denetim Ayarları")
-    api_key = get_api_key()
-    if not api_key:
+api_key = get_api_key()
+if not api_key:
+    with st.expander("🔑 EVDS API Anahtarı (Secrets'ta bulunamadı)", expanded=True):
         api_key = st.text_input("EVDS API Anahtarı", type="password")
+
+st.subheader("⚙️ Denetim Ayarları")
+s1, s2 = st.columns(2)
+with s1:
     baz_gosterge = st.selectbox(
         "Esas Alınacak Gösterge",
         [
@@ -162,6 +164,7 @@ with st.sidebar:
             "Ortalama (Yİ-ÜFE, TÜFE ve Dolar)",
         ],
     )
+with s2:
     yasal_tolerans = st.slider(
         "Ek Tolerans (%)",
         min_value=0.0,
@@ -173,40 +176,6 @@ with st.sidebar:
             " hükmüne dayanmaz. Kurumunuzun kendi kuralını girin."
         ),
     )
-
-# -------------------------------------------------
-# YAN MENÜYÜ 5 SANİYE SONRA OTOMATİK KAPAT (oturumda bir kez)
-# -------------------------------------------------
-components.html(
-    """
-    <script>
-    (function () {
-      const w = window.parent;
-      if (w.__sidebarAutoClosed) return;
-      setTimeout(function () {
-        if (w.__sidebarAutoClosed) return;
-        const doc = w.document;
-        const sb = doc.querySelector('section[data-testid="stSidebar"]');
-        if (sb && sb.getAttribute("aria-expanded") === "false") {
-          w.__sidebarAutoClosed = true;
-          return;
-        }
-        const selectors = [
-          '[data-testid="stSidebarCollapseButton"] button',
-          'button[data-testid="stSidebarCollapseButton"]',
-          '[data-testid="stSidebarCollapseButton"]',
-          '[data-testid="baseButton-header"]'
-        ];
-        for (const sel of selectors) {
-          const btn = doc.querySelector(sel);
-          if (btn) { btn.click(); w.__sidebarAutoClosed = true; break; }
-        }
-      }, 5000);
-    })();
-    </script>
-    """,
-    height=0,
-)
 
 # -------------------------------------------------
 # GİRDİLER
