@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
@@ -93,7 +94,7 @@ def fetch_monthly_index(api_key, series):
     out = {}
     for _, row in df.iterrows():
         val = row.get(col)
-        if val in (None, ""):
+        if val is None or val == "" or pd.isna(val):
             continue
         y, m = str(row["Tarih"]).split("-")[:2]
         out[f"{int(y)}-{int(m):02d}"] = float(val)
@@ -118,6 +119,23 @@ def fetch_fx(api_key, target_date):
         result[name] = float(last[col])
         result[name + "_date"] = last["Tarih"]
     return result
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def fetch_usd_monthly(api_key, start, end):
+    """{'2026-03': aylık ortalama USD/TRY, ...} (zaman çizgisi grafiği için)."""
+    df = evds_request(api_key, SERIES_USD, start, end, frequency=5)
+    col = SERIES_USD.replace(".", "_")
+    out = {}
+    if df.empty or col not in df:
+        return out
+    for _, row in df.iterrows():
+        val = row.get(col)
+        if val is None or val == "" or pd.isna(val):
+            continue
+        y, m = str(row["Tarih"]).split("-")[:2]
+        out[f"{int(y)}-{int(m):02d}"] = float(val)
+    return out
 
 
 def lookup_index(index_map, d):
@@ -153,29 +171,15 @@ if not api_key:
         api_key = st.text_input("EVDS API Anahtarı", type="password")
 
 st.subheader("⚙️ Denetim Ayarları")
-s1, s2 = st.columns(2)
-with s1:
-    baz_gosterge = st.selectbox(
-        "Esas Alınacak Gösterge",
-        [
-            "Yİ-ÜFE (Üretici Fiyat Endeksi)",
-            "TÜFE (Tüketici Fiyat Endeksi)",
-            "Dolar (USD/TRY Kuru)",
-            "Ortalama (Yİ-ÜFE, TÜFE ve Dolar)",
-        ],
-    )
-with s2:
-    yasal_tolerans = st.slider(
-        "Ek Tolerans (%)",
-        min_value=0.0,
-        max_value=20.0,
-        value=5.0,
-        step=0.5,
-        help=(
-            "Kullanıcı tanımlı bir esneklik payıdır; belirli bir mevzuat"
-            " hükmüne dayanmaz. Kurumunuzun kendi kuralını girin."
-        ),
-    )
+baz_gosterge = st.selectbox(
+    "Esas Alınacak Gösterge",
+    [
+        "Yİ-ÜFE (Üretici Fiyat Endeksi)",
+        "TÜFE (Tüketici Fiyat Endeksi)",
+        "Dolar (USD/TRY Kuru)",
+        "Ortalama (Yİ-ÜFE, TÜFE ve Dolar)",
+    ],
+)
 
 # -------------------------------------------------
 # GİRDİLER
@@ -347,7 +351,7 @@ ortalama_fiyat = (
     (yiufe_price + tufe_price + usd_price) / 3 if fx_ok else None
 )
 
-max_makul_sinir = aktif_baz_fiyat * (1 + yasal_tolerans / 100)
+max_makul_sinir = aktif_baz_fiyat
 firma_artis_orani = pct(new_offer_price, initial_price)
 
 # -------------------------------------------------
@@ -358,7 +362,7 @@ st.subheader("🎯 Fiyat Kontrol Sonucu")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Firma Artış Oranı", f"%{firma_artis_orani:.2f}")
 m2.metric("Seçili Gösterge Artışı", f"%{resmi_artis:.2f}")
-m3.metric("Tolerans Dahil Tavan Fiyat", f"{max_makul_sinir:,.2f} ₺")
+m3.metric("Güncel Tavan Fiyat", f"{max_makul_sinir:,.2f} ₺")
 m4.metric("Firma Teklifi", f"{new_offer_price:,.2f} ₺")
 
 if fx_ok:
@@ -374,21 +378,33 @@ if fx_ok:
         delta_color="off",
     )
 
-if new_offer_price <= aktif_baz_fiyat:
-    st.success(
-        "✅ **UYGUN** — Teklif, seçilen endeksle güncellenmiş fiyatın"
-        " altında veya eşittir."
-    )
-elif new_offer_price <= max_makul_sinir:
-    st.warning(
-        "⚠️ **SINIRDA** — Teklif endeksle güncellenmiş fiyatın üzerindedir"
-        " ancak belirlenen tolerans içindedir. Pazarlık önerilir."
-    )
-else:
-    st.error(
-        "🚨 **YÜKSEK** — Teklif endeks ve tolerans sınırını aşmaktadır."
-        " Gerekçelendirilmeli veya yeniden değerlendirilmelidir."
-    )
+fark = new_offer_price - aktif_baz_fiyat
+fark_pct = pct(new_offer_price, aktif_baz_fiyat)
+uygun = fark <= 0
+renk = "#16a34a" if uygun else "#dc2626"
+ikon, baslik = ("✅", "UYGUN") if uygun else ("🚨", "YÜKSEK")
+aciklama = (
+    "Teklif, seçilen göstergeyle güncellenmiş fiyatın altında veya eşittir."
+    if uygun
+    else "Teklif, seçilen göstergeyle güncellenmiş fiyatı aşmaktadır."
+    " Gerekçelendirilmeli veya yeniden değerlendirilmelidir."
+)
+gosterge_adi = baz_gosterge.split(" (")[0]
+st.markdown(
+    f"""
+<div style="border-left:8px solid {renk};background:{renk}1f;
+padding:18px 22px;border-radius:10px;margin:14px 0;">
+  <div style="font-size:1.7rem;font-weight:700;color:{renk};">{ikon} {baslik}</div>
+  <div style="font-size:1.15rem;margin-top:6px;">
+    Tavandan fark: <b>{fark:+,.2f} ₺</b> ({fark_pct:+.2f}%)
+  </div>
+  <div style="opacity:.85;margin-top:4px;">
+    Esas alınan gösterge: <b>{gosterge_adi}</b> · {aciklama}
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 # -------------------------------------------------
 # TABLO VE GRAFİK
@@ -404,7 +420,7 @@ if fx_ok:
         ("Ortalama Bazlı Güncel Fiyat", ortalama_fiyat),
     ]
 rows += [
-    ("Tavan (+Tolerans)", max_makul_sinir),
+    ("Güncel Tavan Fiyat", max_makul_sinir),
     ("Firma Teklifi", new_offer_price),
 ]
 df = pd.DataFrame(rows, columns=["Kriter", "Tutar (₺)"])
@@ -413,26 +429,120 @@ st.divider()
 st.subheader("📋 Karşılaştırma Tablosu")
 st.dataframe(df.style.format({"Tutar (₺)": "{:,.2f} ₺"}), width="stretch")
 
-fig = px.bar(
-    df,
-    x="Kriter",
-    y="Tutar (₺)",
-    color="Kriter",
-    text_auto=".2f",
-    title="Firma Teklifinin Endeks Bazlı Sınırlarla Karşılaştırması",
-)
-fig.add_hline(
-    y=max_makul_sinir,
-    line_color="red",
-    line_dash="dash",
-    annotation_text="Tavan",
-)
-fig.update_layout(showlegend=False, height=450)
-st.plotly_chart(fig, width="stretch")
+tab1, tab2 = st.tabs(["📊 Fiyat Karşılaştırması", "📈 Zaman Çizgisi"])
+
+# ---- Sekme 1: sütun grafiği ----
+with tab1:
+    renkler = {
+        "Son Alım Fiyatı": "#94a3b8",
+        "Yİ-ÜFE Bazlı Güncel Fiyat": "#60a5fa",
+        "TÜFE Bazlı Güncel Fiyat": "#60a5fa",
+        "Dolar Bazlı Güncel Fiyat": "#60a5fa",
+        "Ortalama Bazlı Güncel Fiyat": "#60a5fa",
+        "Güncel Tavan Fiyat": "#6366f1",
+        "Firma Teklifi": "#16a34a" if uygun else "#dc2626",
+    }
+    dfp = df.sort_values("Tutar (₺)")
+    fig = go.Figure(
+        go.Bar(
+            x=dfp["Kriter"],
+            y=dfp["Tutar (₺)"],
+            marker_color=[renkler[k] for k in dfp["Kriter"]],
+            text=[f"{v:,.0f} ₺" for v in dfp["Tutar (₺)"]],
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="%{x}<br>%{y:,.2f} ₺<extra></extra>",
+        )
+    )
+    fig.add_hline(
+        y=max_makul_sinir,
+        line_color="#dc2626",
+        line_dash="dash",
+        annotation_text=f"Tavan: {max_makul_sinir:,.0f} ₺",
+        annotation_position="top left",
+    )
+    fig.update_layout(
+        title="Firma Teklifinin Güncel Fiyatlarla Karşılaştırması",
+        showlegend=False,
+        height=480,
+        yaxis_title="Tutar (₺)",
+        yaxis_tickformat=",.0f",
+        margin=dict(t=70, b=40),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+# ---- Sekme 2: başlangıç = 100 zaman çizgisi ----
+with tab2:
+    keys = [str(m) for m in pd.period_range(
+        initial_date.strftime("%Y-%m"), tender_date.strftime("%Y-%m"), freq="M"
+    )]
+    defs = [("Yİ-ÜFE", yiufe_map), ("TÜFE", tufe_map)]
+    if api_key and fx_ok:
+        try:
+            usd_map = fetch_usd_monthly(
+                api_key, initial_date.replace(day=1), tender_date
+            )
+            if usd_map:
+                defs.append(("Dolar (aylık ort.)", usd_map))
+        except Exception:
+            pass
+
+    rows_tl = []
+    for name, mp in defs:
+        avail = [k for k in keys if k in mp]
+        if not avail:
+            continue
+        base = mp[avail[0]]
+        for k in avail:
+            rows_tl.append(
+                {
+                    "Ay": pd.Period(k).to_timestamp(),
+                    "Gösterge": name,
+                    "Değer": mp[k] / base * 100,
+                }
+            )
+    df_tl = pd.DataFrame(rows_tl)
+
+    if df_tl.empty or df_tl["Ay"].nunique() < 2:
+        st.info(
+            "Zaman çizgisi için en az iki farklı ay ve EVDS verisi gerekir."
+            " Tarih aralığı tek aya denk geliyor veya veri alınamadı."
+        )
+    else:
+        teklif_endeks = new_offer_price / initial_price * 100
+        fig2 = px.line(
+            df_tl,
+            x="Ay",
+            y="Değer",
+            color="Gösterge",
+            markers=True,
+            title="Göstergelerin Değişimi (Son alım ayı = 100)",
+        )
+        fig2.add_hline(
+            y=teklif_endeks,
+            line_color="#16a34a" if uygun else "#dc2626",
+            line_dash="dash",
+            annotation_text=f"Firma teklifi: {teklif_endeks:,.1f}",
+            annotation_position="top left",
+        )
+        fig2.update_layout(
+            height=480,
+            yaxis_title="Endeks (başlangıç = 100)",
+            xaxis_title="",
+            legend_title_text="",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig2, width="stretch")
+        st.caption(
+            "Kesikli çizgi firma teklifinin son alım fiyatına göre seviyesini"
+            " gösterir. Çizginin üzerinde kalan göstergeler, teklifin o"
+            " göstergeden daha az arttığını; altında kalanlar ise teklifin"
+            " daha fazla arttığını ifade eder."
+        )
 
 st.caption(
     "Bu araç, TCMB EVDS'den alınan kur ve TÜİK endeks verileriyle yaklaşık bir"
-    " fiyat kontrolü sunar. Tolerans oranı kullanıcı tanımlıdır. Fiyat farkı"
+    " fiyat kontrolü sunar. Fiyat farkı"
     " ve piyasa fiyat araştırması işlemleri için ilgili mevzuat ve kurumunuzun"
     " ilgili birimi esas alınmalıdır."
 )
